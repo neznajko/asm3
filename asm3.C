@@ -9,8 +9,10 @@ using namespace std;
 #include <map>
 #include <algorithm>
 #include <iostream>
+#include <list>
 #define BIZ 4096 // Block size
 int gas = 0; //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|GNU assembly flag
+char **filenom; // command line file names
 char *loadfile(char *filenom)
 {
     int fd = open(filenom, 0);
@@ -262,42 +264,54 @@ typedef enum {CALL, MAC} mode;
 // around here I'm switching from C to C++ and from char * to strings
 // coz of the STL algorithms
 forward_list<string> mactab;
-map<pair<string, mode>, struct line *> loctab;
-void consmac_nasm(void)
-// macro definition keyword should be the first on the line but because
-// of the escaped new lines macro name is either next token or the
-// first token on the next line. Consturcts both mactab and loctab
+forward_list<string> calltab;
+typedef pair<string, mode> node;
+map<node, struct line *> loctab;
+#define skan(FILE, KEY)				\
+    find((FILE).begin(), (FILE).end(), KEY)
+forward_list<string> Kales[] = {
+    {"call"},
+    {"call", "callb", "calls", "callw", "calll", "callq", "callt"}
+};
+forward_list<string> Red[] = {
+    {"ret"},
+    {"ret", "retb", "rets", "retw", "retl", "retq", "rett"}
+};
+forward_list<string> global[] = {
+    {"global"},
+    {".global", ".globl"}
+};
+forward_list<string> macdef[] = {{"%macro"}, {".macro"}};
+forward_list<string> endmac[] = {{"%endmacro"}, {".endm"}};
+struct token *keyck(forward_list<string> key, struct line *p)
+// ck if there is a token on the line which matches one of the
+// keywords in the list. On success returns token pointer,
+// otherwise NULL
 {
-    static char macdef[] = "%macro";
+    struct token *q = &(p->tknhead);
+    
+    while (q = q->next)
+	if (skan(key, q->str) != key.end()) break;
 
+    return q;	
+}
+void consmac(void)
+// macro definition keyword should be the first on the line but because
+// of the escaped new lines for Nasm macro name is either next token or
+// the first token on the next line. Consturcts both mactab and loctab
+{
     struct line *p = &src;
     struct token *q;
 
     while (p = p->next) {
-	q = p->tknhead.next; // first token on the line
-	if (strcmp(macdef, q->str)) continue; // no match
+	if ((q = keyck(macdef[gas], p)) == NULL) continue;
 	q = q->next;
-	if (q == NULL) { // \new line
+	if (q == NULL) { // Nasm \new line
 	    p = p->next; // advance to next line
 	    q = p->tknhead.next;
 	}
 	mactab.push_front(q->str);
 	loctab[{q->str, MAC}] = p;
-    }
-}
-void consmac_gas(void)
-// the same without the \new lines stuff
-{
-    static char macdef[] = ".macro";
-
-    struct line *p = &src;
-    struct token *q;
-
-    while (p = p->next) {
-	q = p->tknhead.next; // first token on the line
-	if (strcmp(macdef, q->str)) continue; // no match
-	mactab.push_front(q->next->str);
-	loctab[{q->next->str, MAC}] = p;
     }
 }
 void dump_mactab(void)
@@ -324,68 +338,44 @@ void dump_loctab(void)
 	}
     }
 }
-forward_list<string> calltab;
-#define skan(FILE, KEY)				\
-    find((FILE).begin(), (FILE).end(), KEY)
-forward_list<string> Kales = {
-    "call",
-    "callb",
-    "calls",
-    "callw",
-    "calll",
-    "callq",
-    "callt"
-};
-// Gas global keywords
-forward_list<string> global = {
-    ".global",
-    ".globl"
-};
-bool isGasKey(forward_list<string> key, char *str)
+// Both functions skan for call keyword and return pointer
+// to the following token or NULL if not found
+struct token *isgascall(struct line **p)
 {
-    return (skan(key, str) != key.end());
+    struct token *q = keyck(Kales[gas], *p);
+
+    if (q == NULL) return NULL;
+    
+    return q->next;
 }
-void conscalltab_gas(void)
+struct token *isnasmcall(struct line **p)
+{
+    struct token *q = keyck(Kales[gas], *p);
+
+    if (q == NULL) return NULL;
+    q = q->next;
+    if (q == NULL) { // \new line
+	*p = (*p)->next; // advance to next line
+	q = (*p)->tknhead.next;
+    }
+    return q;
+}
+struct token * (*iscall[])(struct line **p) = {
+    isnasmcall, isgascall };
+void conscalltab(void)
+// skans for call and global instr
 {
     struct line *p = &src;
     struct token *q;
 
     while (p = p->next) {
-	q = &(p->tknhead);
-	while (q = q->next) {
-	    // ck if call instr or boss function
-	    if ((isGasKey(global, q->str) ||
-		 isGasKey(Kales, q->str)) == 0) continue;
-	    // avoid duplicates
-	    if (skan(calltab, q->next->str) == calltab.end())
-		calltab.push_front(q->next->str);
-	}
-    }    
-}
-bool isNasmKey(forward_list<string> key, char *str)
-{
-    return (key.front() == str);
-}
-void conscalltab_nasm(void)
-{
-    static string globdef = "global";
-
-    struct line *p = &src;
-    struct token *q;
-
-    while (p = p->next) {
-	q = &(p->tknhead); 
-	while (q = q->next) {
-	    if (((globdef == q->str) ||
-		 isNasmKey(Kales, q->str)) == 0) continue; // no match
+	if ((q = keyck(global[gas], p)) == NULL) {
+	    if ((q = iscall[gas](&p)) == NULL) continue;
+	} else {
 	    q = q->next;
-	    if (q == NULL) { // \new line
-		p = p->next; // advance to next line
-		q = p->tknhead.next;
-	    }
-	    if (skan(calltab, q->str) == calltab.end())
-		calltab.push_front(q->str);
 	}
+	if (skan(calltab, q->str) == calltab.end())
+	    calltab.push_front(q->str);
     }
 }
 void dump_calltab(void)
@@ -441,17 +431,39 @@ struct line *snoop_nasm(string needle)
     }
     return NULL;
 }
+struct token *ismacall(struct line *p)
+// one can think of a macro az a user defined instruction hence
+// we check if there is a macro call on the line
+{
+    return keyck(mactab, p);
+}
+bool calldef(struct line *p)
+// call definition ck, this is like a reverse snoop.
+{
+    // we need to ck only the first token
+    char *haystack = p->tknhead.next->str;
+    
+    for (auto c: calltab) {
+	if (labelck(haystack, c.c_str())) return true;
+    }
+    // if Nasm ck for an exact match
+    if (gas == 0) {
+	for (auto c: calltab) {
+	    if (haystack == c) return true;
+	}
+    }
+    return false;
+}
 void usage(char *prognom)
 {
-    printf("Usage: %s -n name [-ghr] file...\n", prognom);
+    printf("Usage: %s -n name [-ghmr] file...\n", prognom);
     printf("  -n name       root name\n");
     printf("  -g            gas flag\n");
     printf("  -h            help\n");
+    printf("  -m            set root mode to MAC\n");
     printf("  -r            reverse tree\n");
 }
 void (*post_loader[])(char *) = { nasm_post_loader, gas_post_loader };
-void (*consmac[])(void) = { consmac_nasm, consmac_gas };
-void (*conscalltab[])(void) = { conscalltab_nasm, conscalltab_gas };
 struct line * (*snoop[])(string) = { snoop_nasm, snoop_gas };
 void consloc(void)
 // macro locations were figured by the consmac function here we
@@ -460,21 +472,180 @@ void consloc(void)
     for (auto c: calltab)
 	loctab[{c, CALL}] = snoop[gas](c);
 }
+void test_Zone(void)
+{
+    struct line *p = &src;
+
+    while (p = p->next) {
+	if (calldef(p)) {
+	    cout << p->ifile << ' ' << p->linum << endl;
+	}
+    }
+    exit(0);
+}
+typedef map<node, list<node>> tree;
+tree str8; // straight caller callee tree
+tree revs; // reverse callee caller tree
+void bldmac3(node n, struct line *p)
+{
+    // there might be nested macros so if macdef s++ if endmac s--
+    // end exit if s == 0
+    int s = 1; // es counter
+    struct token *q;
+    node m;
+    list<node> l;
+
+    str8[n] = {}; // initialise n with 0 subtrees
+
+    while (p = p->next) {
+	if (keyck(macdef[gas], p)) { // ck if macdef
+	    s++;
+	    continue;
+	}
+	if (keyck(endmac[gas], p)) { // ck if endmac
+	    if (--s == 0) return; // ve ar don!
+	    continue;
+	}
+	if (s > 1) continue; // ignore nested macro calls
+	if (q = iscall[gas](&p)) {
+	    m = {q->str, CALL};
+	} else if (q = ismacall(p)) {
+	    m = {q->str, MAC};
+	} else {
+	    continue;
+	}
+	l = str8[n];
+	if (skan(l, m) == l.end()) str8[n].push_back(m);
+    }
+}
+void bldcall3(node n, struct line *p)
+{
+    struct token *q;
+    node m;
+    list<node> l;
+
+    str8[n] = {}; // initialise n with 0 subtrees
+
+    if (p == NULL) return;
+    if (keyck(Red[gas], p)) return;
+    if (q = iscall[gas](&p)) {
+	str8[n].push_back({q->str, CALL});
+    } else if (q = ismacall(p)) {
+	str8[n].push_back({q->str, MAC});
+    }
+    while (p = p->next) {
+	if (calldef(p)) return; // new func def
+	if (keyck(Red[gas], p)) { // ck if ret instr
+	    return; // ve ar don!
+	}
+	if (q = iscall[gas](&p)) {
+	    m = {q->str, CALL};
+	} else if (q = ismacall(p)) {
+	    m = {q->str, MAC};
+	} else {
+	    continue;
+	}
+	l = str8[n];
+	if (skan(l, m) == l.end()) str8[n].push_back(m);
+    }
+}
+void bldstr8(void)
+{
+    for (auto l: loctab) {
+	if (l.first.second == CALL) {
+	    bldcall3(l.first, l.second);
+	} else {
+	    bldmac3(l.first, l.second);
+	}
+    }
+}
+void bldrevs(void)
+{
+    for (auto r : str8) {
+	for (auto n : r.second) {
+	    revs[n].push_back(r.first);
+	}
+    }
+}
+void bld3(void)
+{
+    bldstr8();
+    bldrevs();
+}
+void ck3(tree t)
+{
+    for (auto r: t) {
+	cout << r.first.first << ' ' << r.first.second << ":\n";
+	for (auto s: r.second) {
+	    cout << "  " << s.first << ' ' << s.second << endl;
+	}
+    }
+}
+void dumpnode(node n)
+{
+    string nom = n.first;
+    mode mod = n.second;
+    struct line *p = loctab[n];
+        
+    cout << nom << " <";
+    if (p) {
+	cout << filenom[p->ifile] << ", "
+	     << p->linum;
+    }
+    cout << ">";
+    if (mod == MAC)
+	cout << " (m)";
+}
+void dump3(node root, string indent, tree t)
+{    
+    static string hook = "`-----> ";
+    static string hooK = "`-----* ";
+    static list<node> hstr; // history stack (detecting cycles)
+
+    dumpnode(root);
+    if (skan(hstr, root) != hstr.end()) {
+    	cout << " (c)\n";
+    	return;
+    }
+    cout << endl;
+    hstr.push_back(root);
+
+    list<node> s = t[root];
+    if (s.empty()) {
+    	return;
+    }
+    node back;    
+    back = s.back();
+    s.pop_back();
+    for (auto n : s) {
+    	cout << indent << hook;
+    	dump3(n, indent + "`       ", t);
+    	if (!hstr.empty())
+    	    hstr.pop_back();
+    }
+    cout << indent << hooK;
+    dump3(back, indent + "        ", t);
+    if (!hstr.empty())
+    	hstr.pop_back();
+}
 int main(int argc, char *argv[])
 {
     int revsflag = 0; //--------------reverse-flag----------------- */
     int opt; //==================================option=character=====
     char *rootnom = NULL; //                         _start, main etc.
     char *prognom = basename(argv[0]); //^^^^^^^^^^^^^^^program^name^^
+    mode rootmod = CALL; // default root mode
 
-    while ((opt = getopt(argc, argv, "gn:hr")) != -1) {
+    while ((opt = getopt(argc, argv, "ghmn:r")) != -1) {
     	switch (opt) {
     	    case 'g': gas = 1;
     		break;
-    	    case 'n': rootnom = optarg;
-    		break;
     	    case 'h': usage(prognom);
     		return 0;
+	    case 'm': rootmod = MAC;
+		break;
+    	    case 'n': rootnom = optarg;
+    		break;
     	    case 'r': revsflag = 1;
     		break;
     	    default : usage(prognom);
@@ -486,22 +657,33 @@ int main(int argc, char *argv[])
     	return 1;
     }
     char *buf;
+    int nfiles = argc - optind;
+    int ifile; // file index
+
+    filenom = (char **) malloc(nfiles * sizeof (char *));
+    
     for (int j = optind; j < argc; j++) {
+	ifile = j - optind;
+	filenom[ifile] = argv[j];
 	buf = loadfile(argv[j]);
 	post_loader[gas](buf);
-	consrc(j - optind, buf);
+	consrc(ifile, buf);
     }
-    consmac[gas]();
-    conscalltab[gas]();
+    consmac();
+    conscalltab();
     consloc();
+    bld3();
+#ifdef DEBUG
+    dump_mactab();
+    dump_calltab();
     dump_loctab();
+    cout << "str8:\n";
+    ck3(str8);
+    cout << "revs:\n";
+    ck3(revs);
+#endif
+    dump3({rootnom, rootmod}, "", revsflag ? revs : str8);
     return 0;
 }
 //``````````````````````````````````````````````````````````````````````
 //                                                                  log:
-// - write q <- isgascall(p) and q <- isnasmcall(&p)
-// isgasglobal, isnasmglobal, isgasmacdef, isnasmacdef and rewrite the
-// code
-// - write is gasmacend, nasmacend, isgasret, isnasmret,
-// isgasmacall, isnasmacall etc.
-// - bld3

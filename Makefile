@@ -10,7 +10,7 @@ $(TARGET): $(TARGET).o
 $(TARGET).o: $(TARGET).C
 	$(CC) $(CFLAGS) $< -c -o $@
 
-.PHONY: all clean debug
+.PHONY: clean debug
 clean:
 	$(RM) $(TARGET) $(TARGET).o
 
