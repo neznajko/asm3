@@ -12,22 +12,30 @@ using namespace std;
 #include <list>
 #define BIZ 4096 // Block size
 int gas = 0; //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|GNU assembly flag
-char **filenom; // command line file names
+char **srcfile;
 char *loadfile(char *filenom)
+// We avoid making system calls for every single character by loading
+// source files into memory. Initially BIZ bytes are allocated and if
+// file size is greater than that we reallocate and read until the
+// whole file is loaded
 {
-    int fd = open(filenom, 0);
+    int fd = open(filenom, 0); // file descriptor
     int n; // number of read bytes
     int size = 0; // realloc size
     char *buf = (char *) realloc(NULL, BIZ);
     char *ptr = buf; // read buffer pointer
+    
     while((n = read(fd, ptr, BIZ)) == BIZ) {
 	size += BIZ;
 	buf = (char *) realloc(buf, size + BIZ);
 	ptr = buf + size;
-    } // Append end of token character and zero byte
+    }
+    // In the lexer phase we want the zero byte to has only on function
+    // that is end of file thatz why we append end of token character
+    // a space before it
     *(buf + size + n) = ' ';
     if (n == BIZ - 1) { 
-	// after adding end of token character, at this point
+	// after adding end of token character, at this condition
 	// there is no space left for the \0 byte, it's possible that
 	// realloc takes care of this automaticaly but in any case
 	// allocate space for one more byte
@@ -36,6 +44,7 @@ char *loadfile(char *filenom)
 	*(buf + size + n) = '\0';
     }
     close(fd);
+
     return buf;
 }
 int spck(char c)
@@ -69,7 +78,14 @@ int strck(char c)
 {
     return (c == '\'' || c == '\"' || c == '`');
 }
+// The idea of post loaders is to discard comments, strings and spaces
+// and replacing them with a single space. So we have line comments,
+// block comments(Gas), strings, new lines, \new lines(Nasm), spaces,
+// (am I missing something) and everything else is a token character.
 void nasm_post_loader(char *buf)
+// Nasm has one type of comment ; but it has \new lines and we have to
+// take care of this coz they can appear inside tokens, strings,
+// comments and everywhere else
 {
     char c; // buffer character
     char *ibuf = buf - 1;
@@ -145,6 +161,8 @@ int gaslck(char c, char **ibuf)
     if (c == 0) break;				\
     if (clcknext() == 0) break;    
 void gas_post_loader(char *buf)
+// the good new is that Gas doesn't have \new lines, the bad news is
+// that it has block comments and two type of line comments # and //
 {
     char c; // buffer character
     char *ibuf = buf - 1;
@@ -215,6 +233,9 @@ void constoken(char *buf)
     tsp = p; // update tkn stack pointer
 }
 void consrc(int ifile, char *buf)
+// construct a linked structure that will be used for building
+// various reference tables and str8 tree. It is accessed through
+// src head global variable
 {
     char c; // character
     int nlc = 1; // new line counter
@@ -261,14 +282,13 @@ void dumpsrc(void)
     }
 }
 typedef enum {CALL, MAC} mode;
-// around here I'm switching from C to C++ and from char * to strings
-// coz of the STL algorithms
+// around here we are switching from C to C++ and from char *
+// to strings coz of the STL algorithms
 forward_list<string> mactab;
 forward_list<string> calltab;
-typedef pair<string, mode> node;
-map<node, struct line *> loctab;
-#define skan(FILE, KEY)				\
-    find((FILE).begin(), (FILE).end(), KEY)
+typedef pair<string, mode> node_t;
+map<node_t, struct line *> loctab;
+#define skan(FILE, KEY) find((FILE).begin(), (FILE).end(), KEY)
 forward_list<string> Kales[] = {
     {"call"},
     {"call", "callb", "calls", "callw", "calll", "callq", "callt"}
@@ -456,11 +476,11 @@ bool calldef(struct line *p)
 }
 void usage(char *prognom)
 {
-    printf("Usage: %s -n name [-ghmr] file...\n", prognom);
-    printf("  -n name       root name\n");
+    printf("Usage: %s [-ghmr] -n name file...\n", prognom);
     printf("  -g            gas flag\n");
     printf("  -h            help\n");
     printf("  -m            set root mode to MAC\n");
+    printf("  -n name       root name\n");
     printf("  -r            reverse tree\n");
 }
 void (*post_loader[])(char *) = { nasm_post_loader, gas_post_loader };
@@ -483,17 +503,17 @@ void test_Zone(void)
     }
     exit(0);
 }
-typedef map<node, list<node>> tree;
-tree str8; // straight caller callee tree
-tree revs; // reverse callee caller tree
-void bldmac3(node n, struct line *p)
+typedef map<node_t, list<node_t>> tree_t;
+tree_t str8; // straight caller callee tree
+tree_t revs; // reverse callee caller tree
+void bldmac3(node_t n, struct line *p)
 {
     // there might be nested macros so if macdef s++ if endmac s--
     // end exit if s == 0
     int s = 1; // es counter
     struct token *q;
-    node m;
-    list<node> l;
+    node_t m;
+    list<node_t> l;
 
     str8[n] = {}; // initialise n with 0 subtrees
 
@@ -518,11 +538,11 @@ void bldmac3(node n, struct line *p)
 	if (skan(l, m) == l.end()) str8[n].push_back(m);
     }
 }
-void bldcall3(node n, struct line *p)
+void bldcall3(node_t n, struct line *p)
 {
     struct token *q;
-    node m;
-    list<node> l;
+    node_t m;
+    list<node_t> l;
 
     str8[n] = {}; // initialise n with 0 subtrees
 
@@ -572,16 +592,16 @@ void bld3(void)
     bldstr8();
     bldrevs();
 }
-void ck3(tree t)
+void ck3(tree_t tree)
 {
-    for (auto r: t) {
+    for (auto r: tree) {
 	cout << r.first.first << ' ' << r.first.second << ":\n";
 	for (auto s: r.second) {
 	    cout << "  " << s.first << ' ' << s.second << endl;
 	}
     }
 }
-void dumpnode(node n)
+void dumpnode(node_t n)
 {
     string nom = n.first;
     mode mod = n.second;
@@ -589,18 +609,18 @@ void dumpnode(node n)
         
     cout << nom << " <";
     if (p) {
-	cout << filenom[p->ifile] << ", "
+	cout << srcfile[p->ifile] << ", "
 	     << p->linum;
     }
     cout << ">";
     if (mod == MAC)
 	cout << " (m)";
 }
-void dump3(node root, string indent, tree t)
+void dump3(node_t root, string indent, tree_t tree)
 {    
     static string hook = "`-----> ";
     static string hooK = "`-----* ";
-    static list<node> hstr; // history stack (detecting cycles)
+    static list<node_t> hstr; // history stack (detect cycles)
 
     dumpnode(root);
     if (skan(hstr, root) != hstr.end()) {
@@ -610,31 +630,32 @@ void dump3(node root, string indent, tree t)
     cout << endl;
     hstr.push_back(root);
 
-    list<node> s = t[root];
+    list<node_t> s = tree[root];
     if (s.empty()) {
     	return;
     }
-    node back;    
+    node_t back;    
     back = s.back();
     s.pop_back();
     for (auto n : s) {
     	cout << indent << hook;
-    	dump3(n, indent + "`       ", t);
+    	dump3(n, indent + "`       ", tree);
     	if (!hstr.empty())
     	    hstr.pop_back();
     }
     cout << indent << hooK;
-    dump3(back, indent + "        ", t);
+    dump3(back, indent + "        ", tree);
     if (!hstr.empty())
     	hstr.pop_back();
 }
 int main(int argc, char *argv[])
 {
-    int revsflag = 0; //--------------reverse-flag----------------- */
+    bool revsflag = false; //---------reverse-flag----------------- */
     int opt; //==================================option=character=====
     char *rootnom = NULL; //                         _start, main etc.
     char *prognom = basename(argv[0]); //^^^^^^^^^^^^^^^program^name^^
     mode rootmod = CALL; // default root mode
+    char *buf; // the address of currently loaded file
 
     while ((opt = getopt(argc, argv, "ghmn:r")) != -1) {
     	switch (opt) {
@@ -646,7 +667,7 @@ int main(int argc, char *argv[])
 		break;
     	    case 'n': rootnom = optarg;
     		break;
-    	    case 'r': revsflag = 1;
+    	    case 'r': revsflag = true;
     		break;
     	    default : usage(prognom);
     		return 2;
@@ -656,18 +677,10 @@ int main(int argc, char *argv[])
     	usage(prognom);
     	return 1;
     }
-    char *buf;
-    int nfiles = argc - optind;
-    int ifile; // file index
-
-    filenom = (char **) malloc(nfiles * sizeof (char *));
-    
     for (int j = optind; j < argc; j++) {
-	ifile = j - optind;
-	filenom[ifile] = argv[j];
 	buf = loadfile(argv[j]);
 	post_loader[gas](buf);
-	consrc(ifile, buf);
+	consrc(j - optind, buf);
     }
     consmac();
     conscalltab();
@@ -682,8 +695,12 @@ int main(int argc, char *argv[])
     cout << "revs:\n";
     ck3(revs);
 #endif
-    dump3({rootnom, rootmod}, "", revsflag ? revs : str8);
+    srcfile = argv + optind;
+    dump3({rootnom, rootmod}, "", revsflag? revs: str8);
+
     return 0;
 }
 //``````````````````````````````````````````````````````````````````````
 //                                                                  log:
+// - make example test files
+// - write README.md

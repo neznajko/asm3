@@ -1,14 +1,12 @@
 TARGET = asm3
 CC = g++
-DBFLAG = -ggdb
-CFLAGS = $(DBFLAG) -m32
-LDFLAGS = -march=i386	
+GDB = -ggdb
 
 $(TARGET): $(TARGET).o
-	$(CC) $(DBFLAG) $^ -o $@ $(LDFLAGS)
+	$(CC) $(GDB) $^ -o $@ $(LDFLAGS)
 
 $(TARGET).o: $(TARGET).C
-	$(CC) $(CFLAGS) $< -c -o $@
+	$(CC) $(GDB) $< -c -o $@
 
 .PHONY: clean debug
 clean:
