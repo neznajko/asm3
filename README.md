@@ -100,5 +100,9 @@ you ask me why, I would answer bcoz a program should have at least one
 bug and 3 issues, you can quote me.
 
 ![bye](pix/vandal.png)
+<<<<<<< HEAD
 https://youtu.be/pfcgoSoPY-8
+=======
+https://youtu.be/3vOdFiFc4tA
+>>>>>>> 9a41a2c7074833704391942b6becac69f776c407
 ## The End
