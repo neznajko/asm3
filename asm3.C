@@ -298,7 +298,7 @@ forward_list<string> Red[] = {
     {"ret", "retb", "rets", "retw", "retl", "retq", "rett"}
 };
 forward_list<string> global[] = {
-    {"global"},
+    {"global", "GLOBAL"},
     {".global", ".globl"}
 };
 forward_list<string> macdef[] = {{"%macro"}, {".macro"}};
@@ -702,5 +702,3 @@ int main(int argc, char *argv[])
 }
 //``````````````````````````````````````````````````````````````````````
 //                                                                  log:
-// - make example test files
-// - write README.md
